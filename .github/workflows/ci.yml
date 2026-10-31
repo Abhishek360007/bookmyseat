@@ -28,3 +28,16 @@ jobs:
       # A broken Dockerfile fails the build too
       - name: Build Docker image
         run: docker build -t bookmyseat:ci .
+      # Continuous deployment: only after everything above is green, and only for pushes to main.
+      # Skipped (not failed) when the RENDER_DEPLOY_HOOK_URL secret isn't set, e.g. on forks.
+      - name: Deploy to Render
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          RENDER_DEPLOY_HOOK_URL: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
+        run: |
+          if [ -z "$RENDER_DEPLOY_HOOK_URL" ]; then
+            echo "RENDER_DEPLOY_HOOK_URL secret not set, skipping deploy"
+            exit 0
+          fi
+          curl -fsS -X POST "$RENDER_DEPLOY_HOOK_URL" > /dev/null
+          echo "Render deploy triggered"

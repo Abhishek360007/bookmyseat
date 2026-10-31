@@ -65,6 +65,38 @@ Measured by the Testcontainers tests in this repo: 50 threads are released at th
 | 50 users **confirm** the same seat (holds mocked as valid) | `ok=1`, `lockLost=49`: exactly **1** booking |
 | Same booking race **without `@Version`** | **50 bookings for one seat** (the test fails, as it should) |
 
+## Performance
+
+Measured with [k6](https://k6.io) against the production Docker image (`prod` profile, connection pool of 5) on one machine (12 CPUs). Scripts are in [`load-tests/`](load-tests).
+
+**Browsing** (50 virtual users searching, opening a show and loading its seat map for 55 s):
+
+| Setup | Throughput | p95 search | p95 show | p95 seat map | Errors |
+|---|---|---|---|---|---|
+| Local database | ~1,250 req/s | 60 ms | 59 ms | 62 ms | 0 |
+| Database with 20 ms latency, **no cache** | 82 req/s | 608 ms | 626 ms | 625 ms | 0 |
+| Database with 20 ms latency, **Redis cache** | **214 req/s** | **4 ms** | **4 ms** | 675 ms | 0 |
+
+The 20 ms of latency is added with [Toxiproxy](https://github.com/Shopify/toxiproxy) to mimic a managed database across the network (like Render → Neon). It shows the real bottleneck: each request holds one of only 5 pooled connections for several round trips, so requests queue. Caching shows and search results in Redis takes those requests off the database entirely. The seat map is deliberately not cached (it shows live holds), so it is now the remaining bottleneck.
+
+**Ticket-release rush** (300 users each grab 2 random seats of the same 50, all at once, via hold → confirm):
+
+| Result | Value |
+|---|---|
+| Confirmed bookings | 23 (46 seats) |
+| Rejected at the hold step (`409`) | 277 |
+| Seats sold twice | **0** (checked through the API and directly in the database) |
+| Unexpected responses / server errors | 0 |
+
+Run them yourself (app running on port 8080; raise the rate limits for the rush, since all virtual users share one IP):
+
+```powershell
+docker run --rm -v "${PWD}/load-tests:/scripts" -e BASE_URL=http://host.docker.internal:8080 `
+  -e ADMIN_EMAIL=<admin> -e ADMIN_PASSWORD=<password> grafana/k6:2.3.0 run /scripts/browse.js
+```
+
+**Caching rules:** single shows are cached for 10 minutes and search results for 60 seconds. Any admin change to a show or venue clears the affected entries before the response returns (writes are synchronous: Lettuce would otherwise clear them in the background and a read straight after an edit could see old data, which a test caught). The cache is checked before a transaction starts, so a hit never borrows a database connection.
+
 ## Design decisions
 
 **Redis for holds, PostgreSQL for bookings.** Holds are short-lived, so Redis expires them with no cleanup job, and a Lua script makes "check all seats, then hold all" a single atomic step. Confirmed bookings are permanent records, so they live in PostgreSQL, the source of truth.
@@ -193,11 +225,13 @@ The live demo runs entirely on free tiers, all in Singapore (AWS ap-southeast-1)
 
 ```mermaid
 flowchart LR
-    P[git push to main] --> CI[GitHub Actions<br/>tests + Docker build]
-    CI -->|green| R[Render builds the image<br/>and deploys]
+    P[git push to main] --> CI[GitHub Actions<br/>tests + coverage + Docker build]
+    CI -->|green| R[CI calls Render's deploy hook:<br/>Render builds and deploys]
     R --> H{Health check<br/>/actuator/health/liveness}
     H -->|UP| L[Live]
 ```
+
+The last CI step calls Render's deploy hook (stored as the GitHub secret `RENDER_DEPLOY_HOOK_URL`), so only a commit whose tests, coverage and Docker build are all green reaches production.
 
 **Configuration:** production settings live in the `prod` profile ([`application-prod.properties`](src/main/resources/application-prod.properties)) and come entirely from environment variables: `DB_URL`, `DB_USERNAME`, `DB_PASSWORD`, `REDIS_URL`, `JWT_SECRET`, `ADMIN_EMAIL`, `ADMIN_PASSWORD`. No secrets are in the repo, and production uses its own JWT secret.
 
@@ -244,7 +278,8 @@ The integration tests need Docker and never touch your dev database. GitHub Acti
 - [x] **Week 6:** Production profile, Neon + Upstash + Render deployment, demo seed script
 - [x] **Week 7:** Rate limiting, rotating refresh tokens, CDS for faster cold starts, request ids and JSON logs
 - [x] **Week 8:** Idempotency keys, show search, scheduled cleanup with ShedLock, test coverage in CI, richer Swagger docs
-- [ ] **Later:** email verification for new accounts and payment integration
+- [x] **Week 9:** k6 load tests, a 300-user booking rush with zero double bookings, Redis read cache (p95 608 ms → 4 ms with a remote-like database), deploy from CI
+- [ ] **Later:** email verification for new accounts, payment integration, and a faster seat map
 
 ## Author
 
