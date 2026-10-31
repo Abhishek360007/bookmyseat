@@ -1,5 +1,6 @@
 package com.abhishekraj.BookMySeat.service;
 
+import com.abhishekraj.BookMySeat.config.CacheConfig;
 import com.abhishekraj.BookMySeat.dto.PageResponse;
 import com.abhishekraj.BookMySeat.dto.ShowRequest;
 import com.abhishekraj.BookMySeat.dto.ShowResponse;
@@ -12,6 +13,9 @@ import com.abhishekraj.BookMySeat.repository.ShowRepository;
 import com.abhishekraj.BookMySeat.repository.ShowSpecifications;
 import com.abhishekraj.BookMySeat.repository.VenueRepository;
 import lombok.RequiredArgsConstructor;
+import org.springframework.cache.annotation.CacheEvict;
+import org.springframework.cache.annotation.Cacheable;
+import org.springframework.cache.annotation.Caching;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.domain.Specification;
 import org.springframework.http.HttpStatus;
@@ -33,6 +37,7 @@ public class ShowService {
 	private final SeatRepository seatRepository;
 	private final Clock clock;
 
+	@CacheEvict(cacheNames = CacheConfig.SHOW_SEARCH, allEntries = true)
 	@Transactional
 	public ShowResponse create(ShowRequest request) {
 		Show show = new Show();
@@ -41,6 +46,7 @@ public class ShowService {
 	}
 
 	/** Upcoming shows by default; every filter is optional. */
+	@Cacheable(CacheConfig.SHOW_SEARCH)
 	@Transactional(readOnly = true)
 	public PageResponse<ShowResponse> search(String city, String text, Instant from, Instant to, Pageable pageable) {
 		Instant start = from != null ? from : Instant.now(clock);
@@ -65,11 +71,15 @@ public class ShowService {
 		return shows.stream().map(ShowResponse::from).toList();
 	}
 
+	@Cacheable(cacheNames = CacheConfig.SHOW, key = "#id")
 	@Transactional(readOnly = true)
 	public ShowResponse getById(Long id) {
 		return ShowResponse.from(findShow(id));
 	}
 
+	@Caching(evict = {
+			@CacheEvict(cacheNames = CacheConfig.SHOW, key = "#id"),
+			@CacheEvict(cacheNames = CacheConfig.SHOW_SEARCH, allEntries = true)})
 	@Transactional
 	public ShowResponse update(Long id, ShowRequest request) {
 		Show show = findShow(id);
@@ -77,6 +87,9 @@ public class ShowService {
 		return ShowResponse.from(show);
 	}
 
+	@Caching(evict = {
+			@CacheEvict(cacheNames = CacheConfig.SHOW, key = "#id"),
+			@CacheEvict(cacheNames = CacheConfig.SHOW_SEARCH, allEntries = true)})
 	@Transactional
 	public void delete(Long id) {
 		Show show = findShow(id);

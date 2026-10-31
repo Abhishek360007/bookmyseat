@@ -1,5 +1,6 @@
 package com.abhishekraj.BookMySeat;
 
+import com.abhishekraj.BookMySeat.config.CacheConfig;
 import com.abhishekraj.BookMySeat.entity.Show;
 import com.abhishekraj.BookMySeat.entity.Venue;
 import com.abhishekraj.BookMySeat.repository.ShowRepository;
@@ -10,6 +11,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
+import org.springframework.cache.CacheManager;
 import org.springframework.context.annotation.Import;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.ResultActions;
@@ -40,9 +42,12 @@ class ShowSearchApiTest {
 	@Autowired MockMvc mvc;
 	@Autowired ShowRepository showRepository;
 	@Autowired VenueRepository venueRepository;
+	@Autowired CacheManager cacheManager;
 
 	@BeforeEach
 	void setUp() {
+		// Shows are saved straight through the repository here, which skips the API's cache eviction
+		cacheManager.getCache(CacheConfig.SHOW_SEARCH).clear();
 		Venue mumbai = venue("PVR Phoenix", "Mumbai");
 		Venue pune = venue("INOX Pune", "Pune");
 		show("Dune: Part Three", mumbai, 1);
